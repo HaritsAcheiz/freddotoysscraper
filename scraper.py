@@ -101,33 +101,38 @@ class FTScraper:
 		curr.execute("SELECT url, html FROM  products_src")
 		datas = curr.fetchall()
 		product_datas = list()
+
+		with open('shopify_schema.json', 'r') as file:
+			product_schema = json.load(file)
+
 		for data in datas:
+			current_product = product_schema
 			tree = HTMLParser(data[1])
-			script_tags = tree.css_first('script#product-json')
-			product_data = json.loads(script_tags.text(strip=True))
 
-			with open('shopify_schema.json', 'r') as file:
-				current_product = json.load(file)
+			script_tags = tree.css('script')
+			script_content = None
 
-			current_product['Handle'] = product_data['id']
+			for script in script_tags:
+				if 'window.hulkapps.product' in script.text():
+					script_content = script.text()
+					break
+			if script_content:
+				product_data_match = re.search(r'window\.hulkapps\.product\s*=\s*({.+})', script_content, re.DOTALL)
+				if product_data_match:
+					product_data_str = product_data_match.group(1)
+					product_data = json.loads(product_data_str)
+
+			current_product['Handle'] = product_data['handle']
 			current_product['Title'] = product_data['title']
-
-			product_elem = tree.css_first('div#shopify-section-product')
-
-			desc_elem = tree.css_first('div.content-container')
-			desc_overview = self.clean_html(desc_elem.css_first('div.tabs-content-container').html)
-			if desc_elem is not None:
-				current_product['Body (HTML)'] = desc_overview
-
-			current_product['Vendor'] = 'RCR'
-
-			breadcrumbs = product_elem.css_first('div.container').text(strip=True).split('/')
+			current_product['Body (HTML)'] = product_data['description']
+			current_product['Vendor'] = 'FTOYS'
+			breadcrumbs = tree.css_first('div.product-breadcrumbs').text(strip=True).split('/')
 			current_product['Product Category'] = ' > '.join(breadcrumbs[1:-1])
-
 			current_product['Type'] = product_data['type']
 			current_product['Tags'] = ', '.join(product_data['tags'])
-
-			option_labels = product_elem.css('label.product-options-label')
+			product_elem = tree.css_first('product-info > div.product__info')
+			print(product_elem.html)
+			option_labels = product_elem.css('div.product-variant-picker__option-label')
 			for index, option_label in enumerate(option_labels, 1):
 				current_product[f'Option{index} Name'] = option_label.text(strip=True).split(':')[0]
 
@@ -165,14 +170,13 @@ class FTScraper:
 				variant_cost.append(round(variant['price'] / 100, 2))
 				variant_image.append(variant['featured_image']['src'][2:])
 
-
 			current_product['Option1 Value'] = option1_values
 			current_product['Option2 Value'] = option2_values
 			current_product['Option3 Value'] = option3_values
 			current_product['Variant SKU'] = variant_skus
 			current_product['Variant Grams'] = variant_weight
 			current_product['Variant Inventory Qty'] = variant_qty
-			current_product['Google Shopping / Custom Label 0'] = 'RCR'
+			current_product['Google Shopping / Custom Label 0'] = 'FTOYS'
 			current_product['Variant Image'] = variant_image
 			current_product['Cost per item'] = variant_cost
 			current_product['Variant Price'] = [self.get_price(x) for x in variant_cost]
@@ -180,11 +184,11 @@ class FTScraper:
 
 			product_datas.append(current_product)
 
-		logger.info(product_datas[-1])
+		logger.info(product_datas[0])
 
 		logger.info('Data Extracted!')
 
 	def run(self, urls):
-		products_html = asyncio.run(self.fetch_all(urls))
-		self.insert_to_db(products_html, database_name='freddotoys.db', table_name='products_src')
-		# self.get_data()
+		# products_html = asyncio.run(self.fetch_all(urls))
+		# self.insert_to_db(products_html, database_name='freddotoys.db', table_name='products_src')
+		self.get_data()
