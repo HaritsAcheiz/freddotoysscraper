@@ -106,7 +106,7 @@ class FTScraper:
 			product_schema = json.load(file)
 
 		for data in datas:
-			current_product = product_schema
+			current_product = product_schema.copy()
 			tree = HTMLParser(data[1])
 
 			script_tags = tree.css('script')
@@ -131,8 +131,8 @@ class FTScraper:
 			current_product['Type'] = product_data['type']
 			current_product['Tags'] = ', '.join(product_data['tags'])
 			product_elem = tree.css_first('product-info > div.product__info')
-			print(product_elem.html)
-			option_labels = product_elem.css('div.product-variant-picker__option-label')
+			# print(product_elem.html)
+			option_labels = product_elem.css('div.product-variant-picker__option-label > span.heading-font-family')
 			for index, option_label in enumerate(option_labels, 1):
 				current_product[f'Option{index} Name'] = option_label.text(strip=True).split(':')[0]
 
@@ -181,10 +181,9 @@ class FTScraper:
 			current_product['Cost per item'] = variant_cost
 			current_product['Variant Price'] = [self.get_price(x) for x in variant_cost]
 			current_product['Variant Compare At Price'] = ''
-
 			product_datas.append(current_product)
 
-		logger.info(product_datas[0])
+		logger.info(product_datas)
 
 		logger.info('Data Extracted!')
 
