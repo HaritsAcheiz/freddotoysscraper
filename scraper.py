@@ -1,4 +1,4 @@
-from httpx import AsyncClient
+from httpx import AsyncClient, Client
 from selectolax.parser import HTMLParser
 from dataclasses import dataclass
 import os
@@ -49,6 +49,20 @@ class FTScraper:
 
 		return cleaned_html
 
+	def get_product_count(self, url):
+		headers = {
+			'user-agent': self.user_agent
+		}
+
+		with Client(headers=headers) as client:
+			response = client.get(url)
+			response.raise_for_status()
+
+		tree = HTMLParser(response.text)
+		product_count = int(tree.css_first('div#ShopProductCount').text(strip=True).split()[0])
+
+		return product_count
+
 	async def fetch(self, aclient, url, limit):
 		logger.info(f'Fetching {url}...')
 		async with limit:
@@ -76,8 +90,8 @@ class FTScraper:
 
 	def insert_to_db(self, htmls, database_name, table_name):
 		logger.info('Inserting data to database...')
-		if os.path.exists(database_name):
-			os.remove(database_name)
+		# if os.path.exists(database_name):
+		# 	os.remove(database_name)
 
 		conn = duckdb.connect(database_name)
 		curr = conn.cursor()
@@ -98,7 +112,7 @@ class FTScraper:
 		logger.info('Getting data from database...')
 		conn = duckdb.connect("freddotoys.db")
 		curr = conn.cursor()
-		curr.execute("SELECT url, html FROM  products_src")
+		curr.execute("SELECT url, html FROM  product_src")
 		datas = curr.fetchall()
 		product_datas = list()
 
@@ -144,6 +158,8 @@ class FTScraper:
 			variant_qty = list()
 			variant_cost = list()
 			variant_image = list()
+			variant_requires_shipping = list()
+			variant_taxable = list()
 
 			for variant in product_data['variants']:
 				if current_product['Option1 Name'] != '':
@@ -169,6 +185,8 @@ class FTScraper:
 				variant_qty.append(10 if variant['available'] else 0)
 				variant_cost.append(round(variant['price'] / 100, 2))
 				variant_image.append(variant['featured_image']['src'][2:])
+				variant_requires_shipping.append(variant['requires_shipping'])
+				variant_taxable.append(variant['taxable'])
 
 			current_product['Option1 Value'] = option1_values
 			current_product['Option2 Value'] = option2_values
@@ -181,13 +199,49 @@ class FTScraper:
 			current_product['Cost per item'] = variant_cost
 			current_product['Variant Price'] = [self.get_price(x) for x in variant_cost]
 			current_product['Variant Compare At Price'] = ''
-			product_datas.append(current_product)
+			current_product['Variant Requires Shipping'] = variant_requires_shipping
+			current_product['Variant Taxable'] = variant_taxable
+			current_product['Image Src'] = [f'https:{url}' for url in product_data['images']]
+			current_product['Image Alt Text'] = [url.split('/')[-1].split('?')[0] for url in product_data['images']]
 
-		logger.info(product_datas)
+			product_datas.append(current_product)
 
 		logger.info('Data Extracted!')
 
-	def run(self, urls):
-		# products_html = asyncio.run(self.fetch_all(urls))
-		# self.insert_to_db(products_html, database_name='freddotoys.db', table_name='products_src')
-		self.get_data()
+		return product_datas
+
+	def fetch_search_result_html(self, url):
+		product_count = self.get_product_count(url)
+		total_pages = math.ceil(product_count / 16)
+
+		urls = [f'{url}?page={page}' for page in range(1, total_pages + 1)]
+		search_results_html = asyncio.run(self.fetch_all(urls))
+		self.insert_to_db(search_results_html, database_name='freddotoys.db', table_name='search_src')
+
+	def get_product_urls(self):
+		logger.info('Getting data from database...')
+		conn = duckdb.connect("freddotoys.db")
+		curr = conn.cursor()
+		curr.execute("SELECT url, html FROM  search_src")
+		datas = curr.fetchall()
+		results = list()
+
+		for data in datas:
+			tree = HTMLParser(data[1])
+			product_elems = tree.css('a.product-card__title')
+			product_urls = list()
+			for elem in product_elems:
+				product_urls.append(f"{self.base_url}{elem.attributes.get('href')}")
+			results.extend(product_urls)
+
+		return results
+
+	def fetch_product_html(self, urls):
+		product_htmls = asyncio.run(self.fetch_all(urls))
+		self.insert_to_db(product_htmls, database_name='freddotoys.db', table_name='product_src')
+
+	def create_csv(self, records, csv_path):
+		con = duckdb.connect(':memory:')
+		con.execute('CREATE TABLE temp_table AS SELECT * FROM records')
+		con.execute(f"COPY temp_table TO '{csv_path}' (HEADER, DELIMITER ',');")
+		con.close()
