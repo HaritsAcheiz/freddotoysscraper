@@ -9,6 +9,8 @@ import logging
 import re
 from html import escape
 import math
+import pandas as pd
+import csv
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -184,7 +186,10 @@ class FTScraper:
 				variant_weight.append(round(variant['weight'] / 100, 2))
 				variant_qty.append(10 if variant['available'] else 0)
 				variant_cost.append(round(variant['price'] / 100, 2))
-				variant_image.append(variant['featured_image']['src'][2:])
+				try:
+					variant_image.append(f"https:{variant['featured_image']['src']}")
+				except Exception:
+					variant_image.append('')
 				variant_requires_shipping.append(variant['requires_shipping'])
 				variant_taxable.append(variant['taxable'])
 
@@ -206,9 +211,31 @@ class FTScraper:
 
 			product_datas.append(current_product)
 
+		df = pd.DataFrame.from_records(product_datas)
+
 		logger.info('Data Extracted!')
 
-		return product_datas
+		return df
+
+	def transform_product_datas(self, df):
+		df = df.explode([
+			'Option1 Value', 'Variant SKU', 'Variant Grams', 'Variant Inventory Qty',
+			'Variant Price', 'Variant Requires Shipping', 'Variant Taxable', 'Variant Image',
+			'Cost per item'],
+			ignore_index=True)
+		with open('variant_unused_columns.csv', 'r') as file:
+			rows = csv.reader(file)
+			variant_unused_columns = [row[0] for row in rows]
+		df.loc[df.duplicated('Handle', keep='first'), variant_unused_columns] = ''
+
+		df = df.explode(['Image Src', 'Image Alt Text'], ignore_index=True)
+		with open('images_unused_columns.csv', 'r') as file:
+			rows = csv.reader(file)
+			images_unused_columns = [row[0] for row in rows]
+		df.loc[df.duplicated('Variant SKU', keep='first'), images_unused_columns] = ''
+		df.drop(columns=['Variants', 'Battery Option Value', 'Battery Price'])
+
+		return df
 
 	def fetch_search_result_html(self, url):
 		product_count = self.get_product_count(url)
@@ -240,8 +267,7 @@ class FTScraper:
 		product_htmls = asyncio.run(self.fetch_all(urls))
 		self.insert_to_db(product_htmls, database_name='freddotoys.db', table_name='product_src')
 
-	def create_csv(self, records, csv_path):
-		con = duckdb.connect(':memory:')
-		con.execute('CREATE TABLE temp_table AS SELECT * FROM records')
-		con.execute(f"COPY temp_table TO '{csv_path}' (HEADER, DELIMITER ',');")
-		con.close()
+	def create_csv(self, df, csv_path):
+		logger.info("Write data into csv...")
+		df.to_csv(csv_path, index=False)
+		logger.info("Done")
