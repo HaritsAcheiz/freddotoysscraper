@@ -21,14 +21,6 @@ class FTScraper:
 	base_url: str = 'https://freddotoys.com'
 	user_agent: str = 'Mozilla/5.0 (X11; Linux x86_64)'
 
-	def get_price(self, wholesaleprice):
-		float_wholesaleprice = float(wholesaleprice)
-		if (wholesaleprice is None) or (float_wholesaleprice == 0) or (wholesaleprice == '0.00'):
-			result = "0.00"
-		else:
-			result = float_wholesaleprice - round(float_wholesaleprice * 5 / 100, 2)
-
-		return f"{result:.2f}"
 
 	def clean_html(self, html_content):
 		# 1. Remove non-standard attributes that Shopify may not recognize
